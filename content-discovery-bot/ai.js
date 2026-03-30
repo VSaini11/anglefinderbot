@@ -32,21 +32,24 @@ function parseAngles(text) {
 
 // ─── Main Angle Extractor ─────────────────────────────────────────────────────
 async function extractAngles(websiteContent) {
-  const prompt = `You are an expert social media marketing strategist and content analyst.
-Your job is to extract clear, actionable marketing angles from website copy.
-Focus on emotional triggers, psychological hooks, and positioning statements that would resonate on short-form social media.
+  const prompt = `You are an expert social media content strategist.
+Analyze this website and extract marketing angles that work across ANY niche.
 
-Extract 5–8 distinct marketing angles from this website content.
-Focus on:
-- Emotional triggers (fear, desire, curiosity, urgency)
-- Hooks that would stop a scroll
-- Transformation/before-after positioning
-- Social proof angles
-- Problem-solution framing
-- FOMO / scarcity
-- Time or money saving claims
+CRITICAL RULES:
+1. Each angle must be a DIFFERENT emotional trigger category.
+2. Do NOT repeat the same emotion or theme twice.
+3. Strip any niche-specific product names, brand names, or jargon — keep angles generic enough to work in fitness, business, lifestyle, etc.
+4. Each angle should be a short, punchy hook — under 8 words.
 
-Return ONLY a plain numbered list. No explanations. One angle per line. Keep each under 8 words.
+You MUST extract exactly one angle from each of these 6 categories (in order):
+1. FOMO / Urgency (fear of missing out or running out of time)
+2. Social Proof / Authority (others trust it, experts endorse it)
+3. Transformation / Before–After (life before vs after using it)
+4. Pain Point / Problem (highlighting a frustration the audience has)
+5. Curiosity / Intrigue (make them want to know more)
+6. Aspiration / Desire (dream outcome, lifestyle, financial freedom)
+
+Return ONLY a numbered list, one angle per line, no explanations, no category labels.
 
 Website Content:
 ${websiteContent}`;

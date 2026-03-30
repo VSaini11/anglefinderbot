@@ -66,19 +66,23 @@ function detectFormat(title = '', snippet = '') {
 // then fall back to snippet regex for organic results.
 function parseEngagement(result = {}) {
   // 1. Direct structured fields from video search results (tbm=vid)
-  if (result.views) return result.views; // e.g. "1.2M views"
+  if (result.views) return result.views;
   if (result.view_count) return `${result.view_count} views`;
 
-  // 2. Snippet-based regex fallback for organic results
+  // 2. Snippet-based regex — use proper decimal pattern to avoid "51." bug
   const snippet = result.snippet || '';
+  const num = '(\\d[\\d,]*(?:\\.\\d+)?[KkMmBb]?)';
   const patterns = [
-    /(\d[\d,.]+[KkMm]?)\s*(likes?|views?|hearts?|reactions?)/i,
-    /(\d[\d,.]+[KkMm]?)\s*💕/,
-    /(\d[\d,.]+[KkMm]?)\s*❤/,
+    new RegExp(`${num}\\s*(likes?|views?|hearts?|reactions?)`, 'i'),
+    new RegExp(`${num}\\s*💕`),
+    new RegExp(`${num}\\s*❤`),
   ];
   for (const pattern of patterns) {
     const match = snippet.match(pattern);
-    if (match) return match[1] + (match[2] ? ' ' + match[2] : '');
+    if (match) {
+      const label = (match[2] || '').trim();
+      return label ? `${match[1]} ${label}` : match[1];
+    }
   }
 
   return null;
@@ -151,31 +155,24 @@ function diversifyByAngle(results, maxPerAngle = 2) {
 // Fix #2: Uses KEYWORD-BASED queries (no quoted angle text) so results come
 // from any niche — fitness, coaching, lifestyle, etc. — not just the source site.
 function buildQueries(angles) {
-  const topAngles = angles.slice(0, 4);
+  // Use ALL 6 angles (one per emotional category from the AI prompt)
+  const topAngles = angles.slice(0, 6);
   const videoQueries = [];
   const organicQueries = [];
 
   const platforms = [
     { site: 'site:tiktok.com', label: 'tiktok' },
     { site: 'site:instagram.com', label: 'instagram' },
-    // Use /reel or /video to avoid Facebook search index pages (Fix #3)
     { site: 'site:facebook.com/reel OR site:facebook.com/video', label: 'facebook' },
   ];
 
+  // Each angle gets its own video + organic query on a different platform
   topAngles.forEach((angle, i) => {
     const keywords = buildSearchKeywords(angle);
     const platform = platforms[i % platforms.length];
     videoQueries.push({ query: `${platform.site} ${keywords}`, angle, platform: platform.label, mode: 'video' });
     organicQueries.push({ query: `${platform.site} ${keywords}`, angle, platform: platform.label, mode: 'organic' });
   });
-
-  // Extra cross-platform coverage for the top 2 angles
-  if (topAngles.length > 0) {
-    const kw0 = buildSearchKeywords(topAngles[0]);
-    const kw1 = buildSearchKeywords(topAngles[1] || topAngles[0]);
-    videoQueries.push({ query: `site:instagram.com ${kw0} viral`, angle: topAngles[0], platform: 'instagram', mode: 'video' });
-    videoQueries.push({ query: `site:tiktok.com ${kw1} trending`, angle: topAngles[1] || topAngles[0], platform: 'tiktok', mode: 'video' });
-  }
 
   return { videoQueries, organicQueries };
 }
@@ -187,10 +184,11 @@ async function fetchQuery({ query, angle, mode }, retries = 2, delay = 1000) {
       const params = {
         q: query,
         api_key: process.env.SERP_API_KEY,
-        num: 5,
+        num: 8,   // Fetch more candidates per query for better pool
         hl: 'en',
         gl: 'us',
       };
+
 
       // Video search mode: returns structured view counts
       if (mode === 'video') params.tbm = 'vid';
@@ -292,16 +290,15 @@ async function searchContent(angles) {
   }
 
 
-  // Fix #4: Enforce angle diversity — dynamically allow enough per angle to reach 10
-  // e.g. 4 angles → ceil(10/4) = 3 per angle → 12 candidates → sliced to 10
-  const uniqueAngleCount = new Set(allResults.map((r) => r.angle)).size || 1;
-  const maxPerAngle = Math.ceil(10 / uniqueAngleCount);
-  const diverse = diversifyByAngle(allResults, maxPerAngle);
+  // Enforce angle diversity: max 2 results per angle (hard cap).
+  // With 6 emotional-category angles from AI: 6×2 = 12 pool → slice to 10.
+  const diverse = diversifyByAngle(allResults, 2);
 
   // Sort: results with real engagement data first
   diverse.sort((a, b) => (b.engagement ? 1 : 0) - (a.engagement ? 1 : 0));
 
   return diverse.slice(0, 10);
+
 
 }
 
