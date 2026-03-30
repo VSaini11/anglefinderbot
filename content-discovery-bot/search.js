@@ -275,8 +275,26 @@ async function searchContent(angles) {
     }
   }
 
+  // ── Pre-Scrape Optimization ──
+  // We grabbed up to 150 candidates to cast a wide net, but scraping all of them
+  // for engagement takes several minutes and triggers strict anti-bot bans.
+  // We trim the unverified candidates down to the top 3 per angle to save time.
+  const angleCounts = {};
+  const trimmedResults = [];
+  for (const r of allResults) {
+    if (!angleCounts[r.angle]) angleCounts[r.angle] = 0;
+    if (r.engagement) {
+      trimmedResults.push(r);
+    } else if (angleCounts[r.angle] < 3) {
+      trimmedResults.push(r);
+      angleCounts[r.angle]++;
+    }
+  }
+  allResults.length = 0;
+  allResults.push(...trimmedResults);
+
   // ── Phase 3: Scrape engagement directly from URLs (fills in N/A gaps) ──
-  // Run in batches of 3 to avoid hammering platforms.
+  // Run in batches of 5 to avoid hammering platforms.
   // Wrapped in try/catch — a scrape failure must NEVER crash the bot.
   try {
     const needsEngagement = allResults.filter((r) => !r.engagement);
