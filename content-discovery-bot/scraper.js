@@ -1,12 +1,12 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
 
-// ─── Retry Helper ─────────────────────────────────────────────────────────────
+// ─── Retry Helper (for main website scraping) ────────────────────────────────
 async function fetchWithRetry(url, retries = 3, delay = 1000) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       const response = await axios.get(url, {
-        timeout: 10000,
+        timeout: 15000,
         headers: {
           'User-Agent':
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
@@ -22,6 +22,22 @@ async function fetchWithRetry(url, retries = 3, delay = 1000) {
       await new Promise((res) => setTimeout(res, delay * attempt));
     }
   }
+}
+
+// ─── Fast-fail fetch (for social media engagement scraping) ───────────────────
+// Single attempt, short timeout — never retries so it doesn't block the bot.
+async function fetchFast(url) {
+  return axios.get(url, {
+    timeout: 6000,
+    headers: {
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+        '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.5',
+    },
+    maxRedirects: 3,
+  });
 }
 
 // ─── Clean Text Helper ────────────────────────────────────────────────────────
@@ -96,7 +112,7 @@ async function scrapeWebsite(url) {
 // Returns null silently on any error (login wall, rate-limit, network error).
 async function scrapeEngagement(url) {
   try {
-    const response = await fetchWithRetry(url, 2, 800);
+    const response = await fetchFast(url);
     const html = response.data;
     const $ = cheerio.load(html);
 
