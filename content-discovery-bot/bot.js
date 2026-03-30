@@ -28,11 +28,12 @@ function formatResults(results) {
     lines.push(
       `*${i + 1}.* 🔗 ${item.link}\n` +
       `   📱 *Platform:* ${item.platform}\n` +
-      `   ❤️ *Engagement:* ${item.engagement || 'N/A'}\n` +
+      `   ❤️ *Engagement:* ${item.engagement || '📊 Not public'}\n` +
       `   🎬 *Format:* ${item.format}\n` +
       `   🎯 *Angle:* ${item.angle}\n`
     );
   });
+
 
   return lines.join('\n');
 }
@@ -112,11 +113,30 @@ bot.on('message', async (msg) => {
 
   } catch (err) {
     console.error('Bot error:', err.message);
-    await bot.editMessageText(
-      `❌ Something went wrong: ${err.message}\n\nPlease try again or use a different URL.`,
-      { chat_id: chatId, message_id: loadingMsg.message_id }
-    );
+
+    // If we threw a clean user-facing message ourselves, show it directly.
+    // Otherwise map common HTTP errors to friendly text.
+    const status = err?.response?.status;
+    let userMsg = err.message;
+
+    if (status === 403) {
+      userMsg =
+        '⛔ *Website blocked access (403)*\n\nThis site uses bot-protection. Try a landing page or blog URL instead.';
+    } else if (status === 404) {
+      userMsg = '❌ *Page not found (404)*\n\nDouble-check the URL and try again.';
+    } else if (status === 429) {
+      userMsg = '⏳ *Rate limited*\n\nThe website is throttling requests. Wait a minute and try again.';
+    } else if (err.code === 'ECONNABORTED' || err.message.includes('timeout')) {
+      userMsg = '⌛ *Request timed out*\n\nThe website took too long to respond. Try a faster/simpler URL.';
+    }
+
+    await bot.editMessageText(userMsg, {
+      chat_id: chatId,
+      message_id: loadingMsg.message_id,
+      parse_mode: 'Markdown',
+    });
   }
+
 });
 
 console.log('🤖 Content Discovery Bot is running...');

@@ -1,19 +1,34 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
 
+// ─── Shared browser headers (Chrome 124 fingerprint) ────────────────────────
+// Sites check sec-ch-ua, sec-fetch-*, and other modern headers.
+const BROWSER_HEADERS = {
+  'User-Agent':
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+    '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Accept-Encoding': 'gzip, deflate, br',
+  'Cache-Control': 'no-cache',
+  Pragma: 'no-cache',
+  'sec-ch-ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+  'sec-ch-ua-mobile': '?0',
+  'sec-ch-ua-platform': '"Windows"',
+  'Sec-Fetch-Dest': 'document',
+  'Sec-Fetch-Mode': 'navigate',
+  'Sec-Fetch-Site': 'none',
+  'Sec-Fetch-User': '?1',
+  'Upgrade-Insecure-Requests': '1',
+};
+
 // ─── Retry Helper (for main website scraping) ────────────────────────────────
 async function fetchWithRetry(url, retries = 3, delay = 1000) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       const response = await axios.get(url, {
         timeout: 15000,
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-            '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.5',
-        },
+        headers: BROWSER_HEADERS,
         maxRedirects: 5,
       });
       return response;
@@ -29,13 +44,7 @@ async function fetchWithRetry(url, retries = 3, delay = 1000) {
 async function fetchFast(url) {
   return axios.get(url, {
     timeout: 6000,
-    headers: {
-      'User-Agent':
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-        '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      'Accept-Language': 'en-US,en;q=0.5',
-    },
+    headers: BROWSER_HEADERS,
     maxRedirects: 3,
   });
 }
@@ -50,7 +59,22 @@ function cleanText(text) {
 
 // ─── Main Scraper ─────────────────────────────────────────────────────────────
 async function scrapeWebsite(url) {
-  const response = await fetchWithRetry(url);
+  let response;
+  try {
+    response = await fetchWithRetry(url);
+  } catch (err) {
+    const status = err?.response?.status;
+    if (status === 403) {
+      throw new Error(
+        '⛔ This website is blocking automated access (403 Forbidden).\n' +
+        'Try a different URL — landing pages and blogs usually work best.'
+      );
+    }
+    if (status === 404) throw new Error('❌ That URL returned a 404 — page not found.');
+    if (status === 429) throw new Error('⏳ Rate-limited by the website. Please wait a minute and try again.');
+    throw err; // re-throw anything else
+  }
+
   const $ = cheerio.load(response.data);
 
   // Remove noise

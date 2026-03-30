@@ -84,54 +84,97 @@ function parseEngagement(result = {}) {
   return null;
 }
 
+// ─── Extract cross-niche search keywords from an angle ────────────────────────
+// Fix #2: Strips stopwords so the emotional hook finds content from ANY niche,
+// not just the website's own niche (e.g. crypto → also fitness, coaching, etc.)
+function buildSearchKeywords(angle) {
+  const STOPWORDS = new Set([
+    'a','an','the','and','or','but','in','on','at','to','for','of','with','by',
+    'from','is','are','was','were','be','been','that','this','your','our','their',
+    'my','we','you','it','its','can','will','how','what','why','when','who','not',
+    'no','do','did','does','has','have','had','get','up','out','all','any','now',
+    'just','even','more','most','than','then','also','very','too','so','as','if',
+  ]);
+  const words = angle
+    .toLowerCase()
+    .replace(/[^\w\s]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length > 2 && !STOPWORDS.has(w));
+  return words.slice(0, 4).join(' ');
+}
+
+// ─── Validate that a link is a direct post/video, not a search page ───────────
+// Fix #3: Rejects Facebook watch/search URLs — only allows real post/reel links.
+function isValidPostLink(link) {
+  if (link.includes('/search/') || link.includes('/search?')) return false;
+
+  if (link.includes('facebook.com') || link.includes('fb.com')) {
+    const isBadFBUrl =
+      /facebook\.com\/watch\/?$/.test(link) ||
+      /facebook\.com\/watch\?(?!v=\d)/.test(link) ||
+      link.includes('/watch/search') ||
+      (link.includes('?q=') && !link.includes('/reel/') && !link.includes('/video/'));
+    if (isBadFBUrl) return false;
+
+    return (
+      /facebook\.com\/reel\/\d+/.test(link) ||
+      /facebook\.com\/video\/\d+/.test(link) ||
+      /facebook\.com\/[^/?]+\/videos?\/\d+/.test(link) ||
+      /facebook\.com\/watch\/\?v=\d+/.test(link)
+    );
+  }
+
+  return true; // TikTok and Instagram links are always direct post URLs
+}
+
+// ─── Enforce angle diversity in final results ─────────────────────────────────
+// Fix #4: Round-robins across angles so no single angle dominates the top 10.
+function diversifyByAngle(results, maxPerAngle = 2) {
+  const buckets = new Map();
+  for (const r of results) {
+    if (!buckets.has(r.angle)) buckets.set(r.angle, []);
+    buckets.get(r.angle).push(r);
+  }
+
+  const diverse = [];
+  const keys = [...buckets.keys()];
+  for (let slot = 0; slot < maxPerAngle && diverse.length < 15; slot++) {
+    for (const key of keys) {
+      const bucket = buckets.get(key);
+      if (slot < bucket.length) diverse.push(bucket[slot]);
+    }
+  }
+  return diverse;
+}
+
 // ─── Build Queries ────────────────────────────────────────────────────────────
-// Returns two sets:
-//   videoQueries  — use tbm=vid (structured view counts)
-//   organicQueries — fallback organic search for broader coverage
+// Fix #2: Uses KEYWORD-BASED queries (no quoted angle text) so results come
+// from any niche — fitness, coaching, lifestyle, etc. — not just the source site.
 function buildQueries(angles) {
   const topAngles = angles.slice(0, 4);
-
   const videoQueries = [];
   const organicQueries = [];
 
-  const videoPlatforms = [
+  const platforms = [
     { site: 'site:tiktok.com', label: 'tiktok' },
     { site: 'site:instagram.com', label: 'instagram' },
-    { site: 'site:facebook.com/watch OR site:facebook.com/reel', label: 'facebook' },
+    // Use /reel or /video to avoid Facebook search index pages (Fix #3)
+    { site: 'site:facebook.com/reel OR site:facebook.com/video', label: 'facebook' },
   ];
 
   topAngles.forEach((angle, i) => {
-    const platform = videoPlatforms[i % videoPlatforms.length];
-    // Primary: video search
-    videoQueries.push({
-      query: `${platform.site} "${angle}"`,
-      angle,
-      platform: platform.label,
-      mode: 'video',
-    });
-    // Fallback: organic search
-    organicQueries.push({
-      query: `${platform.site} "${angle}"`,
-      angle,
-      platform: platform.label,
-      mode: 'organic',
-    });
+    const keywords = buildSearchKeywords(angle);
+    const platform = platforms[i % platforms.length];
+    videoQueries.push({ query: `${platform.site} ${keywords}`, angle, platform: platform.label, mode: 'video' });
+    organicQueries.push({ query: `${platform.site} ${keywords}`, angle, platform: platform.label, mode: 'organic' });
   });
 
-  // Extra coverage queries (video mode)
+  // Extra cross-platform coverage for the top 2 angles
   if (topAngles.length > 0) {
-    videoQueries.push({
-      query: `site:tiktok.com "${topAngles[0]}"`,
-      angle: topAngles[0],
-      platform: 'tiktok',
-      mode: 'video',
-    });
-    videoQueries.push({
-      query: `site:instagram.com "${topAngles[1] || topAngles[0]}"`,
-      angle: topAngles[1] || topAngles[0],
-      platform: 'instagram',
-      mode: 'video',
-    });
+    const kw0 = buildSearchKeywords(topAngles[0]);
+    const kw1 = buildSearchKeywords(topAngles[1] || topAngles[0]);
+    videoQueries.push({ query: `site:instagram.com ${kw0} viral`, angle: topAngles[0], platform: 'instagram', mode: 'video' });
+    videoQueries.push({ query: `site:tiktok.com ${kw1} trending`, angle: topAngles[1] || topAngles[0], platform: 'tiktok', mode: 'video' });
   }
 
   return { videoQueries, organicQueries };
@@ -168,6 +211,9 @@ async function fetchQuery({ query, angle, mode }, retries = 2, delay = 1000) {
           const platform = detectPlatform(link);
 
           if (platform === 'Unknown') return null;
+
+          // Fix #3: Reject Facebook search/index URLs — only allow direct post links
+          if (!isValidPostLink(link)) return null;
 
           const format = detectFormat(title, snippet);
           if (!format) return null;
@@ -246,10 +292,13 @@ async function searchContent(angles) {
   }
 
 
-  // Sort: results with real engagement data first
-  allResults.sort((a, b) => (b.engagement ? 1 : 0) - (a.engagement ? 1 : 0));
+  // Fix #4: Enforce angle diversity — max 2 results per angle, interleaved
+  const diverse = diversifyByAngle(allResults);
 
-  return allResults.slice(0, 10);
+  // Sort: results with real engagement data first
+  diverse.sort((a, b) => (b.engagement ? 1 : 0) - (a.engagement ? 1 : 0));
+
+  return diverse.slice(0, 10);
 }
 
 module.exports = { searchContent };
