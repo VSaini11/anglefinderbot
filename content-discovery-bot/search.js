@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { scrapeEngagement } = require('./scraper');
 
 const SERP_API_URL = 'https://serpapi.com/search.json';
 
@@ -221,6 +222,21 @@ async function searchContent(angles) {
       const results = await fetchQuery(queryObj);
       addResults(results);
       await new Promise((res) => setTimeout(res, 500));
+    }
+  }
+
+  // ── Phase 3: Scrape engagement directly from URLs (fills in N/A gaps) ──
+  // Run in batches of 3 to avoid hammering platforms
+  const needsEngagement = allResults.filter((r) => !r.engagement);
+  const CONCURRENCY = 3;
+  for (let i = 0; i < needsEngagement.length; i += CONCURRENCY) {
+    const batch = needsEngagement.slice(i, i + CONCURRENCY);
+    const scraped = await Promise.all(batch.map((r) => scrapeEngagement(r.link)));
+    scraped.forEach((eng, idx) => {
+      if (eng) batch[idx].engagement = eng;
+    });
+    if (i + CONCURRENCY < needsEngagement.length) {
+      await new Promise((res) => setTimeout(res, 600));
     }
   }
 

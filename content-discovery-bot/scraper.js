@@ -88,4 +88,74 @@ async function scrapeWebsite(url) {
   return combined.trim();
 }
 
-module.exports = { scrapeWebsite };
+// ─── Engagement Scraper ───────────────────────────────────────────────────────
+// Fetches the actual social media URL and tries to pull view/like counts from:
+//   1. og:description  (TikTok reliably puts "123K views · 4.5K likes" here)
+//   2. page <title>    (TikTok also embeds counts in the title)
+//   3. JSON-LD VideoObject interactionStatistic
+// Returns null silently on any error (login wall, rate-limit, network error).
+async function scrapeEngagement(url) {
+  try {
+    const response = await fetchWithRetry(url, 2, 800);
+    const html = response.data;
+    const $ = cheerio.load(html);
+
+    // ── 1. og:description (best source for TikTok & sometimes Instagram) ──
+    const ogDesc =
+      $('meta[property="og:description"]').attr('content') ||
+      $('meta[name="description"]').attr('content') ||
+      '';
+
+    // ── 2. Page title ──
+    const pageTitle = $('title').text() || '';
+
+    const candidateText = `${ogDesc} ${pageTitle}`;
+
+    const engagementPatterns = [
+      // "1.2M views", "125K views", "1,234 views"
+      /(\d[\d,.]*\.?\d*[KkMmBb]?)\s*views?/i,
+      // "45.6K likes", "2.1M likes"
+      /(\d[\d,.]*\.?\d*[KkMmBb]?)\s*likes?/i,
+      // "3.2M plays"
+      /(\d[\d,.]*\.?\d*[KkMmBb]?)\s*plays?/i,
+      // "890K hearts"
+      /(\d[\d,.]*\.?\d*[KkMmBb]?)\s*hearts?/i,
+    ];
+
+    for (const pattern of engagementPatterns) {
+      const match = candidateText.match(pattern);
+      if (match) {
+        // Return e.g. "1.2M views"
+        return `${match[1]} ${match[0].replace(match[1], '').trim()}`;
+      }
+    }
+
+    // ── 3. JSON-LD VideoObject interactionStatistic ──
+    const scripts = $('script[type="application/ld+json"]');
+    for (let i = 0; i < scripts.length; i++) {
+      try {
+        const data = JSON.parse($(scripts[i]).html());
+        const items = Array.isArray(data) ? data : [data];
+        for (const item of items) {
+          const stats = item?.interactionStatistic || [];
+          for (const stat of stats) {
+            const count = stat?.userInteractionCount;
+            const type = stat?.interactionType || '';
+            if (count && (type.includes('Watch') || type.includes('View'))) {
+              return `${count} views`;
+            }
+          }
+        }
+      } catch (_) {
+        // malformed JSON — skip
+      }
+    }
+
+    return null;
+  } catch (_) {
+    // Page blocked (login wall, 403, timeout, etc.) — silently return null
+    return null;
+  }
+}
+
+module.exports = { scrapeWebsite, scrapeEngagement };
