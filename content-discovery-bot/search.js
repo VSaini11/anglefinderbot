@@ -47,24 +47,29 @@ const REJECT_KEYWORDS = [
 function detectFormat(title = '', snippet = '') {
   const text = `${title} ${snippet}`.toLowerCase();
 
-  // Reject low-replicability content
   for (const kw of REJECT_KEYWORDS) {
     if (text.includes(kw)) return null;
   }
 
-  // Match allowed formats
   for (const [format, keywords] of Object.entries(FORMAT_KEYWORDS)) {
     for (const kw of keywords) {
       if (text.includes(kw)) return format;
     }
   }
 
-  // Default: if it's from a valid platform, assume it could be replicated
   return 'Text-on-Screen';
 }
 
 // ─── Parse Engagement ─────────────────────────────────────────────────────────
-function parseEngagement(snippet = '') {
+// Accepts a full result object so we can check structured video fields first,
+// then fall back to snippet regex for organic results.
+function parseEngagement(result = {}) {
+  // 1. Direct structured fields from video search results (tbm=vid)
+  if (result.views) return result.views; // e.g. "1.2M views"
+  if (result.view_count) return `${result.view_count} views`;
+
+  // 2. Snippet-based regex fallback for organic results
+  const snippet = result.snippet || '';
   const patterns = [
     /(\d[\d,.]+[KkMm]?)\s*(likes?|views?|hearts?|reactions?)/i,
     /(\d[\d,.]+[KkMm]?)\s*💕/,
@@ -74,63 +79,87 @@ function parseEngagement(snippet = '') {
     const match = snippet.match(pattern);
     if (match) return match[1] + (match[2] ? ' ' + match[2] : '');
   }
+
   return null;
 }
 
-// ─── Build Search Queries ─────────────────────────────────────────────────────
+// ─── Build Queries ────────────────────────────────────────────────────────────
+// Returns two sets:
+//   videoQueries  — use tbm=vid (structured view counts)
+//   organicQueries — fallback organic search for broader coverage
 function buildQueries(angles) {
-  const platforms = [
+  const topAngles = angles.slice(0, 4);
+
+  const videoQueries = [];
+  const organicQueries = [];
+
+  const videoPlatforms = [
     { site: 'site:tiktok.com', label: 'tiktok' },
     { site: 'site:instagram.com', label: 'instagram' },
     { site: 'site:facebook.com/watch OR site:facebook.com/reel', label: 'facebook' },
   ];
 
-  const queries = [];
+  topAngles.forEach((angle, i) => {
+    const platform = videoPlatforms[i % videoPlatforms.length];
+    // Primary: video search
+    videoQueries.push({
+      query: `${platform.site} "${angle}"`,
+      angle,
+      platform: platform.label,
+      mode: 'video',
+    });
+    // Fallback: organic search
+    organicQueries.push({
+      query: `${platform.site} "${angle}"`,
+      angle,
+      platform: platform.label,
+      mode: 'organic',
+    });
+  });
 
-  // Use top 4 angles to limit API calls
-  const topAngles = angles.slice(0, 4);
-
-  for (const angle of topAngles) {
-    // Pick a platform per angle (rotate)
-    const platform = platforms[queries.length % platforms.length];
-    queries.push({ query: `${platform.site} "${angle}"`, angle, platform: platform.label });
-  }
-
-  // Add a couple of broader queries for coverage
+  // Extra coverage queries (video mode)
   if (topAngles.length > 0) {
-    queries.push({
-      query: `site:tiktok.com "${topAngles[0]}" tutorial`,
+    videoQueries.push({
+      query: `site:tiktok.com "${topAngles[0]}"`,
       angle: topAngles[0],
       platform: 'tiktok',
+      mode: 'video',
     });
-    queries.push({
-      query: `site:instagram.com reels "${topAngles[1] || topAngles[0]}"`,
+    videoQueries.push({
+      query: `site:instagram.com "${topAngles[1] || topAngles[0]}"`,
       angle: topAngles[1] || topAngles[0],
       platform: 'instagram',
+      mode: 'video',
     });
   }
 
-  return queries;
+  return { videoQueries, organicQueries };
 }
 
 // ─── Fetch One Query via SerpAPI ──────────────────────────────────────────────
-async function fetchQuery(query, angle, retries = 2, delay = 1000) {
+async function fetchQuery({ query, angle, mode }, retries = 2, delay = 1000) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      const response = await axios.get(SERP_API_URL, {
-        params: {
-          q: query,
-          api_key: process.env.SERP_API_KEY,
-          num: 5,
-          hl: 'en',
-          gl: 'us',
-        },
-        timeout: 15000,
-      });
+      const params = {
+        q: query,
+        api_key: process.env.SERP_API_KEY,
+        num: 5,
+        hl: 'en',
+        gl: 'us',
+      };
 
-      const organicResults = response.data?.organic_results || [];
+      // Video search mode: returns structured view counts
+      if (mode === 'video') params.tbm = 'vid';
 
-      return organicResults
+      const response = await axios.get(SERP_API_URL, { params, timeout: 15000 });
+
+      // Video search returns video_results; organic returns organic_results
+      const items =
+        response.data?.video_results ||
+        response.data?.organic_results ||
+        [];
+
+      return items
         .map((r) => {
           const link = r.link || '';
           const title = r.title || '';
@@ -140,12 +169,12 @@ async function fetchQuery(query, angle, retries = 2, delay = 1000) {
           if (platform === 'Unknown') return null;
 
           const format = detectFormat(title, snippet);
-          if (!format) return null; // Rejected by heuristics
+          if (!format) return null;
 
           return {
             link,
             platform,
-            engagement: parseEngagement(snippet),
+            engagement: parseEngagement(r),   // pass full object
             format,
             angle,
           };
@@ -153,7 +182,7 @@ async function fetchQuery(query, angle, retries = 2, delay = 1000) {
         .filter(Boolean);
     } catch (err) {
       if (attempt === retries) {
-        console.error(`SerpAPI error for query "${query}":`, err.message);
+        console.error(`SerpAPI error [${mode}] for "${query}":`, err.message);
         return [];
       }
       await new Promise((res) => setTimeout(res, delay * attempt));
@@ -164,28 +193,38 @@ async function fetchQuery(query, angle, retries = 2, delay = 1000) {
 
 // ─── Main Search Orchestrator ─────────────────────────────────────────────────
 async function searchContent(angles) {
-  const queries = buildQueries(angles);
+  const { videoQueries, organicQueries } = buildQueries(angles);
   const allResults = [];
   const seenLinks = new Set();
 
-  // Run queries sequentially to respect rate limits
-  for (const { query, angle } of queries) {
-    if (allResults.length >= 15) break; // Stop early if we have enough
-
-    const results = await fetchQuery(query, angle);
-
+  const addResults = (results) => {
     for (const result of results) {
       if (!seenLinks.has(result.link)) {
         seenLinks.add(result.link);
         allResults.push(result);
       }
     }
+  };
 
-    // Small delay between requests
+  // ── Phase 1: Video search (best engagement data) ──
+  for (const queryObj of videoQueries) {
+    if (allResults.length >= 15) break;
+    const results = await fetchQuery(queryObj);
+    addResults(results);
     await new Promise((res) => setTimeout(res, 500));
   }
 
-  // Sort: prefer results with engagement data
+  // ── Phase 2: Organic fallback if not enough results ──
+  if (allResults.length < 10) {
+    for (const queryObj of organicQueries) {
+      if (allResults.length >= 15) break;
+      const results = await fetchQuery(queryObj);
+      addResults(results);
+      await new Promise((res) => setTimeout(res, 500));
+    }
+  }
+
+  // Sort: results with real engagement data first
   allResults.sort((a, b) => (b.engagement ? 1 : 0) - (a.engagement ? 1 : 0));
 
   return allResults.slice(0, 10);
