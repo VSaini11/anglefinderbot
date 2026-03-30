@@ -251,18 +251,25 @@ async function searchContent(angles) {
     }
   };
 
+  // Helper to test how many diverse results we currently have
+  const getCurrentDiverseCount = () => {
+    const uniqueAngles = new Set(allResults.map((r) => r.angle)).size || 1;
+    const maxPerAngle = Math.max(2, Math.ceil(10 / uniqueAngles));
+    return diversifyByAngle(allResults, maxPerAngle).length;
+  };
+
   // ── Phase 1: Video search (best engagement data) ──
+  // Loop through ALL video queries for all angles so we don't skew to the first few.
   for (const queryObj of videoQueries) {
-    if (allResults.length >= 15) break;
     const results = await fetchQuery(queryObj);
     addResults(results);
     await new Promise((res) => setTimeout(res, 500));
   }
 
-  // ── Phase 2: Organic fallback if not enough results ──
-  if (allResults.length < 10) {
+  // ── Phase 2: Organic fallback if not enough diverse results ──
+  if (getCurrentDiverseCount() < 10) {
     for (const queryObj of organicQueries) {
-      if (allResults.length >= 15) break;
+      if (getCurrentDiverseCount() >= 10) break;
       const results = await fetchQuery(queryObj);
       addResults(results);
       await new Promise((res) => setTimeout(res, 500));
@@ -290,16 +297,15 @@ async function searchContent(angles) {
   }
 
 
-  // Enforce angle diversity: max 2 results per angle (hard cap).
-  // With 6 emotional-category angles from AI: 6×2 = 12 pool → slice to 10.
-  const diverse = diversifyByAngle(allResults, 2);
+  // Enforce angle diversity: prioritize 2 per angle, but allow more if we lack unique angles.
+  const uniqueAngleCount = new Set(allResults.map((r) => r.angle)).size || 1;
+  const maxPerAngleFinal = Math.max(2, Math.ceil(10 / uniqueAngleCount));
+  const diverse = diversifyByAngle(allResults, maxPerAngleFinal);
 
   // Sort: results with real engagement data first
   diverse.sort((a, b) => (b.engagement ? 1 : 0) - (a.engagement ? 1 : 0));
 
   return diverse.slice(0, 10);
-
-
 }
 
 module.exports = { searchContent };
