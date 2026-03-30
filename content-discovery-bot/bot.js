@@ -31,7 +31,7 @@ function formatResults(results) {
     return '❌ No replicable content found. Try another URL.';
   }
 
-  const lines = [`✅ <b>Top ${Math.min(results.length, 10)} Replicable Content Pieces</b>\n`];
+  const lines = ['✅ <b>Top 10 Replicable Content Pieces</b>\n'];
 
   results.slice(0, 10).forEach((item, i) => {
     lines.push(

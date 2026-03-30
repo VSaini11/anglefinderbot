@@ -313,27 +313,51 @@ async function searchContent(angles) {
     console.warn('Engagement scrape phase failed (non-fatal):', err.message);
   }
 
-  // STRICT REQUIREMENT: Drop any results that completely failed to yield public engagement
-  const verifiedResults = allResults.filter((r) => !!r.engagement);
+  // ── Final Selection: Guarantee Exactly 10 Results ──
+  // 1. Separate verified and unverified
+  const verified = allResults.filter(r => !!r.engagement);
+  const unverified = allResults.filter(r => !r.engagement);
 
-  // STRICT REQUIREMENT: Zero repetition — 1 result per emotional angle maximum.
-  const diverse = diversifyByAngle(verifiedResults, 1);
+  // 2. Try to get 1 verified result per angle
+  let selected = diversifyByAngle(verified, 1);
 
-  // Sort by highest engagement
-  diverse.sort((a, b) => {
-    // Basic sorting algorithm converting "1.2M likes" to 1200000
+  // 3. If under 10, fill with 1 unverified result per missing angle
+  if (selected.length < 10) {
+    const selectedAngles = new Set(selected.map((r) => r.angle));
+    const missingAngles = unverified.filter((r) => !selectedAngles.has(r.angle));
+    const additional = diversifyByAngle(missingAngles, 1);
+    selected.push(...additional.slice(0, 10 - selected.length));
+  }
+
+  // 4. If STILL under 10 (e.g. AI returned <10 angles), relax diversity to max 2 per angle
+  if (selected.length < 10) {
+    selected = diversifyByAngle(allResults, 2).slice(0, 10);
+  }
+
+  // 5. If STILL under 10 (rare), take any top 10
+  if (selected.length < 10) {
+    selected = diversifyByAngle(allResults, 10).slice(0, 10);
+  }
+
+  // Sort them so verified ones are at top, and sorted by highest engagement
+  selected.sort((a, b) => {
     const parseNum = (str) => {
-      let num = parseFloat(str.replace(/[^0-9.]/g, '')) || 0;
-      if (str.toLowerCase().includes('m')) num *= 1000000;
-      else if (str.toLowerCase().includes('k')) num *= 1000;
+      let num = parseFloat(str?.replace(/[^0-9.]/g, '')) || 0;
+      if (str?.toLowerCase().includes('m')) num *= 1000000;
+      else if (str?.toLowerCase().includes('k')) num *= 1000;
       return num;
     };
-    return parseNum(b.engagement) - parseNum(a.engagement);
+    
+    const engA = parseNum(a.engagement);
+    const engB = parseNum(b.engagement);
+    
+    if (a.engagement && !b.engagement) return -1;
+    if (!a.engagement && b.engagement) return 1;
+    
+    return engB - engA;
   });
 
-  // If we ended up with fewer than 10 because of extreme anti-bot blocking,
-  // we return what we have (e.g. 7 or 8) rather than repeating angles or showing "Not public".
-  return diverse.slice(0, 10);
+  return selected;
 }
 
 module.exports = { searchContent };
