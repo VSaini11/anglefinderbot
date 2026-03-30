@@ -292,13 +292,17 @@ async function searchContent(angles) {
   }
 
 
-  // Fix #4: Enforce angle diversity — max 2 results per angle, interleaved
-  const diverse = diversifyByAngle(allResults);
+  // Fix #4: Enforce angle diversity — dynamically allow enough per angle to reach 10
+  // e.g. 4 angles → ceil(10/4) = 3 per angle → 12 candidates → sliced to 10
+  const uniqueAngleCount = new Set(allResults.map((r) => r.angle)).size || 1;
+  const maxPerAngle = Math.ceil(10 / uniqueAngleCount);
+  const diverse = diversifyByAngle(allResults, maxPerAngle);
 
   // Sort: results with real engagement data first
   diverse.sort((a, b) => (b.engagement ? 1 : 0) - (a.engagement ? 1 : 0));
 
   return diverse.slice(0, 10);
+
 }
 
 module.exports = { searchContent };
