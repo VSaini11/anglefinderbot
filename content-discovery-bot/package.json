@@ -1,0 +1,34 @@
+{
+  "name": "content-discovery-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot that finds replicable viral content from TikTok, Instagram & Facebook based on a website URL",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js",
+    "dev": "nodemon bot.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "axios": "^1.6.7",
+    "cheerio": "^1.0.0-rc.12",
+    "dotenv": "^16.4.5",
+    "node-telegram-bot-api": "^0.64.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  },
+  "keywords": [
+    "telegram-bot",
+    "content-discovery",
+    "tiktok",
+    "instagram",
+    "facebook",
+    "viral-content",
+    "marketing"
+  ],
+  "author": "",
+  "license": "MIT"
+}
