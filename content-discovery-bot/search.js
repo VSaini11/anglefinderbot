@@ -155,8 +155,8 @@ function diversifyByAngle(results, maxPerAngle = 2) {
 // Fix #2: Uses KEYWORD-BASED queries (no quoted angle text) so results come
 // from any niche — fitness, coaching, lifestyle, etc. — not just the source site.
 function buildQueries(angles) {
-  // Use ALL 6 angles (one per emotional category from the AI prompt)
-  const topAngles = angles.slice(0, 6);
+  // Use ALL 10 angles (one per emotional category from the AI prompt)
+  const topAngles = angles.slice(0, 10);
   const videoQueries = [];
   const organicQueries = [];
 
@@ -184,7 +184,7 @@ async function fetchQuery({ query, angle, mode }, retries = 2, delay = 1000) {
       const params = {
         q: query,
         api_key: process.env.SERP_API_KEY,
-        num: 8,   // Fetch more candidates per query for better pool
+        num: 15,   // Fetch a massive candidate pool since we will strictly filter drops later
         hl: 'en',
         gl: 'us',
       };
@@ -251,11 +251,10 @@ async function searchContent(angles) {
     }
   };
 
-  // Helper to test how many diverse results we currently have
+  // Helper to test how many diverse results WITH ENGAGEMENT we currently have
   const getCurrentDiverseCount = () => {
-    const uniqueAngles = new Set(allResults.map((r) => r.angle)).size || 1;
-    const maxPerAngle = Math.max(2, Math.ceil(10 / uniqueAngles));
-    return diversifyByAngle(allResults, maxPerAngle).length;
+    const withEng = allResults.filter(r => r.engagement);
+    return diversifyByAngle(withEng, 1).length; // strict 1 per angle
   };
 
   // ── Phase 1: Video search (best engagement data) ──
@@ -296,15 +295,26 @@ async function searchContent(angles) {
     console.warn('Engagement scrape phase failed (non-fatal):', err.message);
   }
 
+  // STRICT REQUIREMENT: Drop any results that completely failed to yield public engagement
+  const verifiedResults = allResults.filter((r) => !!r.engagement);
 
-  // Enforce angle diversity: prioritize 2 per angle, but allow more if we lack unique angles.
-  const uniqueAngleCount = new Set(allResults.map((r) => r.angle)).size || 1;
-  const maxPerAngleFinal = Math.max(2, Math.ceil(10 / uniqueAngleCount));
-  const diverse = diversifyByAngle(allResults, maxPerAngleFinal);
+  // STRICT REQUIREMENT: Zero repetition — 1 result per emotional angle maximum.
+  const diverse = diversifyByAngle(verifiedResults, 1);
 
-  // Sort: results with real engagement data first
-  diverse.sort((a, b) => (b.engagement ? 1 : 0) - (a.engagement ? 1 : 0));
+  // Sort by highest engagement
+  diverse.sort((a, b) => {
+    // Basic sorting algorithm converting "1.2M likes" to 1200000
+    const parseNum = (str) => {
+      let num = parseFloat(str.replace(/[^0-9.]/g, '')) || 0;
+      if (str.toLowerCase().includes('m')) num *= 1000000;
+      else if (str.toLowerCase().includes('k')) num *= 1000;
+      return num;
+    };
+    return parseNum(b.engagement) - parseNum(a.engagement);
+  });
 
+  // If we ended up with fewer than 10 because of extreme anti-bot blocking,
+  // we return what we have (e.g. 7 or 8) rather than repeating angles or showing "Not public".
   return diverse.slice(0, 10);
 }
 
