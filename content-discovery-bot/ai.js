@@ -25,9 +25,9 @@ function parseAngles(text) {
   const lines = text
     .split('\n')
     .map((l) => l.replace(/^[-*•\d.)\s]+/, '').trim())
-    .filter((l) => l.length > 3 && l.length < 120);
+    .filter((l) => l.length > MIN_ANGLE_LENGTH && l.length < MAX_ANGLE_LENGTH);
 
-  return [...new Set(lines)].slice(0, 10);
+  return [...new Set(lines)].slice(0, MAX_ANGLES_TO_RETURN);
 }
 
 // ─── Main Angle Extractor ─────────────────────────────────────────────────────
